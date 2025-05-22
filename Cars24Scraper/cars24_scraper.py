@@ -35,11 +35,19 @@ def archive_old_excels(days_old=7):
 
 def send_telegram_alert(message):
     token = os.getenv("TELEGRAM_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if token and chat_id:
+    chat_ids = os.getenv("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_ids:
+        return
+    for chat_id in chat_ids.split(","):
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {"chat_id": chat_id, "text": message}
-        requests.post(url, json=payload)
+        payload = {
+            "chat_id": chat_id.strip(),
+            "text": message
+        }
+        try:
+            requests.post(url, json=payload)
+        except Exception as e:
+            print(f"❌ Failed to send Telegram message to {chat_id}: {e}")
 
 def fetch_data():
     payload = {
