@@ -1,0 +1,38 @@
+name: Daily Scraper
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # Runs at 8:30 AM IST
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: ⬇️ Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: 📦 Install Python Dependencies
+      run: |
+        pip install -r Cars24Scraper/requirements.txt
+        pip install -r SpinnyScraper/requirements.txt
+
+    - name: 🚗 Run Cars24 Scraper
+      run: python Cars24Scraper/cars24_scraper.py
+
+    - name: 🚙 Run Spinny Scraper
+      run: python SpinnyScraper/spinny_scraper.py
+
+    - name: 💾 Commit Updated Files
+      run: |
+        git config user.name "github-actions"
+        git config user.email "github-actions@github.com"
+        git add .
+        git commit -m "🤖 Daily scraper update - $(date '+%Y-%m-%d')" || echo "No changes to commit"
+        git push

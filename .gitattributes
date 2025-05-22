@@ -1,2 +1,4 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+Cars24_snapshot.json
+spinny_snapshot.json
+webScrapCars24.py
+webScrapSpinny.py
