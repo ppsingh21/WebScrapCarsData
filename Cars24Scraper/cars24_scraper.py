@@ -1,37 +1,20 @@
 import requests, json, os, time
 import pandas as pd
 from datetime import datetime
-import shutil
+
+# Telegram credentials
+os.environ["TELEGRAM_TOKEN"] = "7698578725:AAFbPdl3eWNvotkNKt2vu6aTN3KTpsXRpQk"
+os.environ["TELEGRAM_CHAT_ID"] = "6975035469"
 
 SNAPSHOT_FILE = "cars24_snapshot.json"
 TODAY = datetime.now().strftime("%Y-%m-%d")
-EXPORT_FILE = f"Changes_{TODAY}.xlsx"
+EXPORT_FILE = f"Cars24_{TODAY}.xlsx"
 
 API_URL = "https://car-catalog-gateway-in.c24.tech/listing/v1/buy-used-cars-bangalore"
 HEADERS = {
     'User-Agent': 'Mozilla/5.0',
     'Content-Type': 'application/json'
 }
-
-def archive_old_excels(days_old=7):
-    from datetime import timedelta
-    cutoff = datetime.now() - timedelta(days=days_old)
-    archive_dir = "archive"
-    os.makedirs(archive_dir, exist_ok=True)
-
-    for file in os.listdir():
-        if file.startswith("Changes_") and file.endswith(".xlsx"):
-            date_part = file.replace("Changes_", "").replace(".xlsx", "")
-            try:
-                file_date = datetime.strptime(date_part, "%Y-%m-%d")
-                if file_date < cutoff:
-                    shutil.move(file, os.path.join(archive_dir, file))
-            except ValueError:
-                continue
-
-    # Zip archived files
-    shutil.make_archive("archive/cars24_archive", 'zip', archive_dir)
-    print("📦 Archived old files to archive/cars24_archive.zip")
 
 def send_telegram_alert(message):
     token = os.getenv("TELEGRAM_TOKEN")
@@ -54,13 +37,24 @@ def fetch_data():
         "searchFilter": [],
         "cityId": "4709",
         "sort": "bestmatch",
-        "size": 1000,
-        "filterVersion": 1
+        "size": 20,
+        "filterVersion": 2
     }
+
     all_data = {}
+    page = 1
+
     while True:
+        print(f"Fetching Cars24 page {page}...")
         res = requests.post(API_URL, headers=HEADERS, json=payload)
+        if res.status_code != 200:
+            print(f"❌ Error: {res.status_code}")
+            break
+
         cars = res.json().get("content", [])
+        if not cars:
+            break
+
         for car in cars:
             cid = str(car["appointmentId"])
             all_data[cid] = {
@@ -72,15 +66,33 @@ def fetch_data():
                 "Color": car.get("color"),
                 "Ownership": f"{car.get('ownership')}st owner",
                 "KMs Driven": car.get("odometer", {}).get("display", ""),
-                "Price (₹)": car.get("listingPrice"),
+                "Price (₹)": int(car.get("listingPrice", 0)),
                 "Registration": car.get("maskedRegNum"),
                 "Image": car.get("listingImage", {}).get("uri", ""),
                 "Fetched On": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
-        if not res.json().get("searchAfter"):
+
+        # Extract cursor info from the last car
+        last_car = cars[-1]
+        last_score = last_car.get("score")
+        last_id = str(last_car.get("appointmentId"))
+
+        if not last_score or not last_id:
             break
-        payload["searchAfter"] = res.json()["searchAfter"]
+
+        # For next request
+        payload = {
+            "searchFilter": [],
+            "cityId": "4709",
+            "sort": "bestmatch",
+            "size": 20,
+            "searchAfter": [last_score, last_id],
+            "filterVersion": 2
+        }
+
+        page += 1
         time.sleep(0.5)
+
     return all_data
 
 def compare_snapshots(new_data, old_data):
@@ -89,64 +101,60 @@ def compare_snapshots(new_data, old_data):
         if cid not in old_data:
             car["Change"] = "New"
             new.append(car)
-        elif car["Price (₹)"] != old_data[cid]["Price (₹)"]:
-            car["Previous Price (₹)"] = old_data[cid]["Price (₹)"]
-            car["Change"] = "Price Changed"
-            changed.append(car)
+        else:
+            prev_price = int(old_data[cid].get("Price (₹)", 0))
+            curr_price = int(car.get("Price (₹)", 0))
+            if curr_price != prev_price:
+                car["Previous Price (₹)"] = prev_price
+                car["Change"] = "Price Changed"
+                changed.append(car)
     return new, changed
 
 def format_car_list(cars, change_type):
     lines = [f"{change_type} ({len(cars)}):"]
-    for car in cars[:10]:  # Limit to first 10 cars
+    for car in cars:
         name = car.get("Name", "Unknown")
-        price = f"₹{car.get('Price (₹)'):,}"
-        if change_type == "Price Drops":
+        price = f"₹{car.get('Price (₹)', 0):,}"
+        if change_type == "Price Drops" or car.get("Change") == "Price Changed":
             prev = f"↓ from ₹{car.get('Previous Price (₹)', 'NA'):,}"
             lines.append(f"• {name} - {price} {prev}")
         else:
             lines.append(f"• {name} - {price}")
-    if len(cars) > 10:
-        lines.append(f"...and {len(cars) - 10} more.")
     return "\n".join(lines)
 
 def main():
     current = fetch_data()
+
     if not os.path.exists(SNAPSHOT_FILE):
         with open(SNAPSHOT_FILE, "w") as f:
             json.dump(current, f, indent=2)
         df = pd.DataFrame(current.values())
-        df.to_excel(f"Cars24_{TODAY}.xlsx", index=False)
+        df.to_excel(EXPORT_FILE, index=False)
+        print(f"🆕 First run — exported full data to {EXPORT_FILE}")
         return
 
     with open(SNAPSHOT_FILE, "r") as f:
-        if os.stat(SNAPSHOT_FILE).st_size == 0:
-            previous = {}
-        else:
-            previous = json.load(f)
+        previous = json.load(f)
 
     new, changed = compare_snapshots(current, previous)
 
     if new or changed:
-        with pd.ExcelWriter(EXPORT_FILE) as writer:
-            if new:
-                pd.DataFrame(new).to_excel(writer, sheet_name="New Listings", index=False)
-            if changed:
-                pd.DataFrame(changed).to_excel(writer, sheet_name="Price Changed", index=False)
-        print(f"✅ Exported changes to {EXPORT_FILE}")
+        df_all = pd.DataFrame(new + changed)
+        df_all.to_excel(EXPORT_FILE, index=False)
+        print(f"✅ Exported {len(df_all)} new/changed records to {EXPORT_FILE}")
     else:
         print("✅ No new or changed listings.")
+        return
 
     with open(SNAPSHOT_FILE, "w") as f:
         json.dump(current, f, indent=2)
-    archive_old_excels()
-    
-    # Alerts
+
     if changed:
         msg = format_car_list(changed, "Price Drops")
         send_telegram_alert(f"📉 Cars24 Price Drop Alert\n\n{msg}")
     if new:
         msg = format_car_list(new, "New Listings")
         send_telegram_alert(f"🆕 New Cars24 Listings\n\n{msg}")
-        
+
 if __name__ == "__main__":
     main()

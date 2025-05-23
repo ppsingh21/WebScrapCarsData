@@ -1,9 +1,13 @@
-import requests, pandas as pd, time, json, os, shutil
-from datetime import datetime, timedelta
+import requests, pandas as pd, time, json, os
+from datetime import datetime
+
+# Set Telegram credentials here
+os.environ["TELEGRAM_TOKEN"] = "7698578725:AAFbPdl3eWNvotkNKt2vu6aTN3KTpsXRpQk"
+os.environ["TELEGRAM_CHAT_ID"] = "6975035469"
 
 SNAPSHOT_FILE = "spinny_snapshot.json"
 TODAY = datetime.now().strftime("%Y-%m-%d")
-EXPORT_FILE = f"Changes_{TODAY}.xlsx"
+EXPORT_FILE = f"Spinny_{TODAY}.xlsx"
 ARCHIVE_DIR = "archive"
 BASE_URL = "https://api.spinny.com/v3/api/listing/v3/"
 
@@ -15,20 +19,6 @@ params = {
     "size": 40,
     "page": 1
 }
-
-def archive_old_excels(days_old=7):
-    cutoff = datetime.now() - timedelta(days=days_old)
-    os.makedirs(ARCHIVE_DIR, exist_ok=True)
-    for file in os.listdir():
-        if file.startswith("Spinny_") and file.endswith(".xlsx"):
-            try:
-                file_date = datetime.strptime(file.replace("Spinny_", "").replace(".xlsx", ""), "%Y-%m-%d")
-                if file_date < cutoff:
-                    shutil.move(file, os.path.join(ARCHIVE_DIR, file))
-            except Exception:
-                continue
-    shutil.make_archive(f"{ARCHIVE_DIR}/spinny_archive", 'zip', ARCHIVE_DIR)
-    print("📦 Archived old files to archive/spinny_archive.zip")
 
 def send_telegram_alert(message):
     token = os.getenv("TELEGRAM_TOKEN")
@@ -70,7 +60,7 @@ def fetch_data():
                 "Color": car.get("color", ""),
                 "Ownership": f"{car.get('no_of_owners')}st owner",
                 "KMs Driven": f"{car.get('round_off_mileage_new')} km",
-                "Price (₹)": car.get("price", 0),
+                "Price (₹)": int(car.get("price", 0)),
                 "Registration": car.get("rto", ""),
                 "Image": f"https:{car.get('images', [{}])[0].get('file', {}).get('absurl', '')}",
                 "Fetched On": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -89,24 +79,25 @@ def compare_snapshots(new_data, old_data):
         if cid not in old_data:
             car["Change"] = "New"
             new.append(car)
-        elif car["Price (₹)"] != old_data[cid].get("Price (₹)"):
-            car["Previous Price (₹)"] = old_data[cid].get("Price (₹)")
-            car["Change"] = "Price Changed"
-            changed.append(car)
+        else:
+            prev_price = int(old_data[cid].get("Price (₹)", 0))
+            curr_price = int(car["Price (₹)"])
+            if curr_price != prev_price:
+                car["Previous Price (₹)"] = prev_price
+                car["Change"] = "Price Changed"
+                changed.append(car)
     return new, changed
 
 def format_car_list(cars, change_type):
     lines = [f"{change_type} ({len(cars)}):"]
-    for car in cars[:10]:  # Limit to first 10 cars
+    for car in cars:
         name = car.get("Name", "Unknown")
-        price = f"₹{car.get('Price (₹)'):,}"
-        if change_type == "Price Drops":
+        price = f"₹{car.get('Price (₹)', 0):,}"
+        if change_type == "Price Drops" or car.get("Change") == "Price Changed":
             prev = f"↓ from ₹{car.get('Previous Price (₹)', 'NA'):,}"
             lines.append(f"• {name} - {price} {prev}")
         else:
             lines.append(f"• {name} - {price}")
-    if len(cars) > 10:
-        lines.append(f"...and {len(cars) - 10} more.")
     return "\n".join(lines)
 
 def main():
@@ -127,23 +118,18 @@ def main():
 
     if new or changed:
         with pd.ExcelWriter(EXPORT_FILE) as writer:
-            if new:
-                pd.DataFrame(new).to_excel(writer, sheet_name="New Listings", index=False)
-            if changed:
-                pd.DataFrame(changed).to_excel(writer, sheet_name="Price Changed", index=False)
+            df_all = pd.DataFrame(new + changed)
+            df_all.to_excel(writer, sheet_name="New & Changed Listings", index=False)
         print(f"✅ Exported changes to {EXPORT_FILE}")
     else:
         print("✅ No new or changed listings.")
-        return  # 🛑 Exit early — no file written
+        return
 
-    # Update snapshot
+    # Save new snapshot
     with open(SNAPSHOT_FILE, "w") as f:
         json.dump(current, f, indent=2)
 
-    # Archive old files
-    archive_old_excels()
-
-    # Alerts
+    # Telegram Alerts
     if changed:
         msg = format_car_list(changed, "Price Drops")
         send_telegram_alert(f"📉 Spinny Price Drop Alert\n\n{msg}")
