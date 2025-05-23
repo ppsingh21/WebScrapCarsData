@@ -3,7 +3,7 @@ from datetime import datetime
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Set Telegram credentials here
+# Telegram credentials
 os.environ["TELEGRAM_TOKEN"] = "7698578725:AAFbPdl3eWNvotkNKt2vu6aTN3KTpsXRpQk"
 os.environ["TELEGRAM_CHAT_ID"] = "6975035469"
 
