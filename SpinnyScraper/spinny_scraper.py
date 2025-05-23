@@ -108,7 +108,7 @@ def main():
         with open(SNAPSHOT_FILE, "w") as f:
             json.dump(current, f, indent=2)
         df = pd.DataFrame(current.values())
-        df.to_excel(f"Spinny_{TODAY}.xlsx", index=False)
+        df.to_excel(EXPORT_FILE, index=False)  # ✅ Uses correct folder path
         print(f"🆕 First run — exported full data to Spinny_{TODAY}.xlsx")
         return
 
