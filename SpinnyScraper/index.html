@@ -15,15 +15,20 @@
   <div id="fileList">Loading...</div>
 
   <script>
-    const repoURL = "https://api.github.com/repos/ppsingh21/SpinnyScraper/contents";
-    fetch(repoURL)
-      .then(res => res.json())
-      .then(files => {
-        const xlsxFiles = files.filter(f => f.name.endsWith(".xlsx"));
-        const list = xlsxFiles.map(f =>
-          `<a href="${f.download_url}" target="_blank">${f.name}</a>`).join("");
-        document.getElementById("fileList").innerHTML = list || "No files yet.";
-      });
+    const repoURL = "https://api.github.com/repos/ppsingh21/WebScrapCarsData/contents/SpinnyScraper?ref=main";
+
+fetch(repoURL)
+  .then(res => res.json())
+  .then(files => {
+    const xlsxFiles = files
+      .filter(f => f.name.endsWith(".xlsx"))
+      .sort((a, b) => b.name.localeCompare(a.name)); // latest first
+
+    const list = xlsxFiles.map(f =>
+      `<a href="${f.download_url}" target="_blank">${f.name}</a>`).join("");
+
+    document.getElementById("fileList").innerHTML = list || "No files yet.";
+  });
   </script>
 </body>
 </html>
