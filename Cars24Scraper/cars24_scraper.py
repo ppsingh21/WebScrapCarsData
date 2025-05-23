@@ -2,13 +2,15 @@ import requests, json, os, time
 import pandas as pd
 from datetime import datetime
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Telegram credentials
 os.environ["TELEGRAM_TOKEN"] = "7698578725:AAFbPdl3eWNvotkNKt2vu6aTN3KTpsXRpQk"
 os.environ["TELEGRAM_CHAT_ID"] = "6975035469"
 
-SNAPSHOT_FILE = "cars24_snapshot.json"
 TODAY = datetime.now().strftime("%Y-%m-%d")
-EXPORT_FILE = f"Cars24_{TODAY}.xlsx"
+EXPORT_FILE = os.path.join(SCRIPT_DIR, f"Cars24_{TODAY}.xlsx")
+SNAPSHOT_FILE = os.path.join(SCRIPT_DIR, "cars24_snapshot.json")
 
 API_URL = "https://car-catalog-gateway-in.c24.tech/listing/v1/buy-used-cars-bangalore"
 HEADERS = {

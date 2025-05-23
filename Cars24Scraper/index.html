@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cars24 Daily Report Viewer</title>
+  <style>
+    body { font-family: sans-serif; padding: 2em; background: #f9f9f9; }
+    h1 { color: #333; }
+    a { display: block; margin: 10px 0; text-decoration: none; color: #0066cc; }
+  </style>
+</head>
+<body>
+  <h1>📊 Cars24 Daily Excel Files</h1>
+  <div id="fileList">Loading...</div>
+
+  <script>
+    const repoURL = "https://api.github.com/repos/ppsingh21/WebScrapCarsData/contents/Cars24Scraper?ref=main";
+
+fetch(repoURL)
+  .then(res => res.json())
+  .then(files => {
+    const xlsxFiles = files
+      .filter(f => f.name.endsWith(".xlsx"))
+      .sort((a, b) => b.name.localeCompare(a.name)); // latest first
+
+    const list = xlsxFiles.map(f =>
+      `<a href="${f.download_url}" target="_blank">${f.name}</a>`).join("");
+
+    document.getElementById("fileList").innerHTML = list || "No files yet.";
+  });
+  </script>
+</body>
+</html>

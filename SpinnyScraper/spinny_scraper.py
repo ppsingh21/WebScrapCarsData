@@ -1,14 +1,15 @@
 import requests, pandas as pd, time, json, os
 from datetime import datetime
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Set Telegram credentials here
 os.environ["TELEGRAM_TOKEN"] = "7698578725:AAFbPdl3eWNvotkNKt2vu6aTN3KTpsXRpQk"
 os.environ["TELEGRAM_CHAT_ID"] = "6975035469"
 
-SNAPSHOT_FILE = "spinny_snapshot.json"
 TODAY = datetime.now().strftime("%Y-%m-%d")
-EXPORT_FILE = f"Spinny_{TODAY}.xlsx"
-ARCHIVE_DIR = "archive"
+EXPORT_FILE = os.path.join(SCRIPT_DIR, f"Spinny_{TODAY}.xlsx")
+SNAPSHOT_FILE = os.path.join(SCRIPT_DIR, "spinny_snapshot.json")
 BASE_URL = "https://api.spinny.com/v3/api/listing/v3/"
 
 params = {
