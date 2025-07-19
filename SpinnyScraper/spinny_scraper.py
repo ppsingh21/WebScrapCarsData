@@ -12,13 +12,16 @@ EXPORT_FILE = os.path.join(SCRIPT_DIR, f"Spinny_{TODAY}.xlsx")
 SNAPSHOT_FILE = os.path.join(SCRIPT_DIR, "spinny_snapshot.json")
 BASE_URL = "https://api.spinny.com/v3/api/listing/v3/"
 
-params = {
-    "city": "bangalore",
+# list all the city slugs you want to scrape
+CITIES = ["bangalore", "mumbai", "delhi-ncr", "kolkata", "hyderabad", "chennai"]
+
+# base params that are common for every request
+BASE_PARAMS = {
     "product_type": "cars",
-    "category": "used",
+    "category":     "used",
     "ratio_status": "available",
-    "size": 40,
-    "page": 1
+    "size":         40,
+    "page":         1
 }
 
 def send_telegram_alert(message):
@@ -37,13 +40,16 @@ def send_telegram_alert(message):
         except Exception as e:
             print(f"❌ Failed to send Telegram message to {chat_id}: {e}")
 
-def fetch_data():
+def fetch_data_for_city(city):
+    """Fetch all pages for a single city and return dict[id] -> record."""
+    params = BASE_PARAMS.copy()
+    params["city"] = city
     all_data = {}
     while True:
-        print(f"Fetching page {params['page']}...")
+        print(f"Fetching {city} page {params['page']}…")
         res = requests.get(BASE_URL, params=params)
         if res.status_code != 200:
-            print(f"❌ Error: {res.status_code}")
+            print(f"❌ Error {res.status_code} for {city}")
             break
 
         results = res.json().get("results", [])
@@ -53,18 +59,20 @@ def fetch_data():
         for car in results:
             cid = str(car.get("id"))
             all_data[cid] = {
-                "id": cid,
-                "Name": f"{car.get('make')} {car.get('model')}",
-                "Variant": car.get("variant", ""),
-                "Fuel": car.get("fuel_type", ""),
-                "Year": car.get("make_year", ""),
-                "Color": car.get("color", ""),
-                "Ownership": f"{car.get('no_of_owners')}st owner",
-                "KMs Driven": f"{car.get('round_off_mileage_new')} km",
-                "Price (₹)": int(car.get("price", 0)),
+                "ID":           cid,
+                "City":         city,
+                "Make":         car.get("make"),
+                "Model":        car.get("model"),
+                "Variant":      car.get("variant", ""),
+                "Year":         car.get("make_year", ""),
+                "KM Driven":    car.get("round_off_mileage_new", 0),
+                "Ownership":    f"{car.get('no_of_owners', 0)}st owner",
+                "Transmission": car.get("transmission", "").title(),
+                "Fuel":         car.get("fuel_type", "").title(),
+                "BodyType":     car.get("body_type", "").title(),
+                "Price (₹)":    int(car.get("price", 0)),
                 "Registration": car.get("rto", ""),
-                "Image": f"https:{car.get('images', [{}])[0].get('file', {}).get('absurl', '')}",
-                "Fetched On": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "Fetched On":   datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
 
         if not res.json().get("next"):
@@ -102,12 +110,16 @@ def format_car_list(cars, change_type):
     return "\n".join(lines)
 
 def main():
-    current = fetch_data()
+    combined = {}
+    for city in CITIES:
+        city_data = fetch_data_for_city(city)
+        combined.update(city_data)
+
 
     if not os.path.exists(SNAPSHOT_FILE) or os.stat(SNAPSHOT_FILE).st_size == 0:
         with open(SNAPSHOT_FILE, "w") as f:
-            json.dump(current, f, indent=2)
-        df = pd.DataFrame(current.values())
+            json.dump(combined, f, indent=2)
+        df = pd.DataFrame(combined.values())
         df.to_excel(EXPORT_FILE, index=False)  # ✅ Uses correct folder path
         print(f"🆕 First run — exported full data to Spinny_{TODAY}.xlsx")
         return
@@ -115,7 +127,7 @@ def main():
     with open(SNAPSHOT_FILE, "r") as f:
         previous = json.load(f)
 
-    new, changed = compare_snapshots(current, previous)
+    new, changed = compare_snapshots(combined, previous)
 
     if new or changed:
         with pd.ExcelWriter(EXPORT_FILE) as writer:
@@ -128,7 +140,7 @@ def main():
 
     # Save new snapshot
     with open(SNAPSHOT_FILE, "w") as f:
-        json.dump(current, f, indent=2)
+        json.dump(combined, f, indent=2)
 
     # Telegram Alerts
     if changed:

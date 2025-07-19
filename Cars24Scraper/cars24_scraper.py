@@ -13,10 +13,21 @@ EXPORT_FILE = os.path.join(SCRIPT_DIR, f"Cars24_{TODAY}.xlsx")
 SNAPSHOT_FILE = os.path.join(SCRIPT_DIR, "cars24_snapshot.json")
 
 API_URL = "https://car-catalog-gateway-in.c24.tech/listing/v1/buy-used-cars-bangalore"
+
 HEADERS = {
     'User-Agent': 'Mozilla/5.0',
     'Content-Type': 'application/json'
 }
+
+# define your cities & their IDs here:
+CITIES = [
+    {"slug": "bangalore", "cityId": "4709"},
+    {"slug": "mumbai", "cityId": "2378"},
+    {"slug": "delhi-ncr", "cityId": "132"},
+    {"slug": "kolkata", "cityId": "777"},
+    {"slug": "hyderabad", "cityId": "3686"},
+    {"slug": "chennai", "cityId": "5732"},
+]
 
 def send_telegram_alert(message):
     token = os.getenv("TELEGRAM_TOKEN")
@@ -34,10 +45,15 @@ def send_telegram_alert(message):
         except Exception as e:
             print(f"❌ Failed to send Telegram message to {chat_id}: {e}")
 
-def fetch_data():
+def fetch_data_for_city(slug, city_id):
+    """
+    Fetch all pages for a single city slug/cityId combination.
+    Returns a dict of {appointmentId: record_dict}
+    """
+    api_url = f"https://car-catalog-gateway-in.c24.tech/listing/v1/buy-used-cars-{slug}"
     payload = {
         "searchFilter": [],
-        "cityId": "4709",
+        "cityId": city_id,
         "sort": "bestmatch",
         "size": 20,
         "filterVersion": 2
@@ -47,8 +63,8 @@ def fetch_data():
     page = 1
 
     while True:
-        print(f"Fetching Cars24 page {page}...")
-        res = requests.post(API_URL, headers=HEADERS, json=payload)
+        print(f"Fetching {slug} page {page}...")
+        res = requests.post(api_url, headers=HEADERS, json=payload)
         if res.status_code != 200:
             print(f"❌ Error: {res.status_code}")
             break
@@ -60,17 +76,19 @@ def fetch_data():
         for car in cars:
             cid = str(car["appointmentId"])
             all_data[cid] = {
-                "id": cid,
-                "Name": car.get("carName"),
+                "ID": cid,
+                "City": city_id,
+                "Make": car.get("make"),
+                "Model": car.get("model"),
                 "Variant": car.get("variant"),
-                "Fuel": car.get("fuelType"),
                 "Year": car.get("year"),
-                "Color": car.get("color"),
-                "Ownership": f"{car.get('ownership')}st owner",
-                "KMs Driven": car.get("odometer", {}).get("display", ""),
+                "KM Driven": car.get("odometer", {}).get("value"),
+                "Ownership": car.get("ownership"),
+                "Transmission": car.get("transmissionType", {}).get("value"),
+                "Fuel": car.get("fuelType"),
+                "BodyType": car.get("bodyType"),
                 "Price (₹)": int(car.get("listingPrice", 0)),
                 "Registration": car.get("maskedRegNum"),
-                "Image": car.get("listingImage", {}).get("uri", ""),
                 "Fetched On": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
 
@@ -125,12 +143,18 @@ def format_car_list(cars, change_type):
     return "\n".join(lines)
 
 def main():
-    current = fetch_data()
+    combined = []
+    # loop over each city
+    for c in CITIES:
+        data = fetch_data_for_city(c["slug"], c["cityId"])
+        for rec in data.values():
+            rec["City"] = c["slug"]
+            combined.append(rec)
 
     if not os.path.exists(SNAPSHOT_FILE):
         with open(SNAPSHOT_FILE, "w") as f:
-            json.dump(current, f, indent=2)
-        df = pd.DataFrame(current.values())
+            json.dump(combined, f, indent=2)
+        df = pd.DataFrame(combined)
         df.to_excel(EXPORT_FILE, index=False)
         print(f"🆕 First run — exported full data to {EXPORT_FILE}")
         return
@@ -138,7 +162,7 @@ def main():
     with open(SNAPSHOT_FILE, "r") as f:
         previous = json.load(f)
 
-    new, changed = compare_snapshots(current, previous)
+    new, changed = compare_snapshots(combined, previous)
 
     if new or changed:
         df_all = pd.DataFrame(new + changed)
@@ -149,7 +173,7 @@ def main():
         return
 
     with open(SNAPSHOT_FILE, "w") as f:
-        json.dump(current, f, indent=2)
+        json.dump(combined, f, indent=2)
 
     if changed:
         msg = format_car_list(changed, "Price Drops")
