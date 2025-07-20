@@ -3,9 +3,9 @@ from datetime import datetime
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Telegram credentials
-os.environ["TELEGRAM_TOKEN"] = "7698578725:AAFbPdl3eWNvotkNKt2vu6aTN3KTpsXRpQk"
-os.environ["TELEGRAM_CHAT_ID"] = "6975035469"
+# Use environment variables (set in GitHub Actions secrets)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 TODAY = datetime.now().strftime("%Y-%m-%d")
 EXPORT_FILE = os.path.join(SCRIPT_DIR, f"Spinny_{TODAY}.xlsx")
@@ -18,64 +18,68 @@ CITIES = ["bangalore", "mumbai", "delhi-ncr", "kolkata", "hyderabad", "chennai"]
 # base params that are common for every request
 BASE_PARAMS = {
     "product_type": "cars",
-    "category":     "used",
+    "category": "used",
     "ratio_status": "available",
-    "size":         40,
-    "page":         1
+    "size": 40,
+    "page": 1
 }
 
 def send_telegram_alert(message):
-    token = os.getenv("TELEGRAM_TOKEN")
-    chat_ids = os.getenv("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_ids:
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram credentials missing")
         return
-    for chat_id in chat_ids.split(","):
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
+    for chat_id in TELEGRAM_CHAT_ID.split(","):
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {
             "chat_id": chat_id.strip(),
-            "text": message
+            "text": message,
+            "parse_mode": "HTML"
         }
         try:
-            requests.post(url, json=payload)
+            requests.post(url, json=payload, timeout=10)
         except Exception as e:
-            print(f"❌ Failed to send Telegram message to {chat_id}: {e}")
+            print(f"❌ Telegram send failed: {e}")
 
-def fetch_data_for_city(city):
+def fetch_data_for_city(city, fetch_time):
     """Fetch all pages for a single city and return dict[id] -> record."""
     params = BASE_PARAMS.copy()
     params["city"] = city
     all_data = {}
     while True:
         print(f"Fetching {city} page {params['page']}…")
-        res = requests.get(BASE_URL, params=params)
-        if res.status_code != 200:
-            print(f"❌ Error {res.status_code} for {city}")
+        try:
+            res = requests.get(BASE_URL, params=params, timeout=30)
+            res.raise_for_status()
+            data = res.json()
+        except Exception as e:
+            print(f"❌ Error fetching {city} page {params['page']}: {e}")
             break
 
-        results = res.json().get("results", [])
+        results = data.get("results", [])
         if not results:
             break
 
         for car in results:
             cid = str(car.get("id"))
             all_data[cid] = {
-                "ID":           cid,
-                "City":         city,
-                "Make":         car.get("make"),
-                "Model":        car.get("model"),
-                "Variant":      car.get("variant", ""),
-                "Year":         car.get("make_year", ""),
-                "KM Driven":    car.get("round_off_mileage_new", 0),
-                "Ownership":    f"{car.get('no_of_owners', 0)}st owner",
+                "ID": cid,
+                "City": city,
+                "Name": f"{car.get('make', '')} {car.get('model', '')}",
+                "Make": car.get("make"),
+                "Model": car.get("model"),
+                "Variant": car.get("variant", ""),
+                "Year": car.get("make_year", ""),
+                "KM Driven": car.get("round_off_mileage_new", 0),
+                "Ownership": f"{car.get('no_of_owners', 0)}st owner",
                 "Transmission": car.get("transmission", "").title(),
-                "Fuel":         car.get("fuel_type", "").title(),
-                "BodyType":     car.get("body_type", "").title(),
-                "Price (₹)":    int(car.get("price", 0)),
+                "Fuel": car.get("fuel_type", "").title(),
+                "BodyType": car.get("body_type", "").title(),
+                "Price (₹)": int(car.get("price", 0)),
                 "Registration": car.get("rto", ""),
-                "Fetched On":   datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "Fetched On": fetch_time
             }
 
-        if not res.json().get("next"):
+        if not data.get("next"):
             break
 
         params["page"] += 1
@@ -83,72 +87,97 @@ def fetch_data_for_city(city):
     return all_data
 
 def compare_snapshots(new_data, old_data):
-    new, changed = [], []
-    for cid, car in new_data.items():
+    new_listings = []
+    price_drops = []
+    
+    for cid, new_car in new_data.items():
         if cid not in old_data:
-            car["Change"] = "New"
-            new.append(car)
+            new_listings.append(new_car)
         else:
-            prev_price = int(old_data[cid].get("Price (₹)", 0))
-            curr_price = int(car["Price (₹)"])
-            if curr_price != prev_price:
-                car["Previous Price (₹)"] = prev_price
-                car["Change"] = "Price Changed"
-                changed.append(car)
-    return new, changed
+            old_price = old_data[cid].get("Price (₹)", 0)
+            new_price = new_car.get("Price (₹)", 0)
+            if new_price < old_price:  # Only alert on price drops
+                price_drops.append({
+                    **new_car,
+                    "Previous Price (₹)": old_price
+                })
+    return new_listings, price_drops
 
-def format_car_list(cars, change_type):
-    lines = [f"{change_type} ({len(cars)}):"]
+def format_car_list(cars, list_type):
+    if not cars:
+        return ""
+        
+    message = f"<b>{list_type} ({len(cars)}):</b>\n\n"
     for car in cars:
         name = car.get("Name", "Unknown")
         price = f"₹{car.get('Price (₹)', 0):,}"
-        if change_type == "Price Drops" or car.get("Change") == "Price Changed":
-            prev = f"↓ from ₹{car.get('Previous Price (₹)', 'NA'):,}"
-            lines.append(f"• {name} - {price} {prev}")
+        city = car.get("City", "Unknown")
+        
+        if list_type == "Price Drops":
+            old_price = f"₹{car.get('Previous Price (₹)', 0):,}"
+            message += f"• {city.upper()}: {name}\n"
+            message += f"  🔻 {old_price} → {price} ({round((car['Previous Price (₹)'] - car['Price (₹)'])/car['Previous Price (₹)']*100)}%)\n\n"
         else:
-            lines.append(f"• {name} - {price}")
-    return "\n".join(lines)
+            message += f"• {city.upper()}: {name}\n"
+            message += f"  💰 {price}\n\n"
+            
+    return message
+
+def load_existing_snapshot():
+    if not os.path.exists(SNAPSHOT_FILE):
+        return {}
+        
+    try:
+        with open(SNAPSHOT_FILE, "r") as f:
+            data = json.load(f)
+            # Convert to dict if loaded as list (legacy format)
+            return {item['ID']: item for item in data} if isinstance(data, list) else data
+    except Exception as e:
+        print(f"Error loading snapshot: {e}")
+        return {}
 
 def main():
-    combined = {}
+    fetch_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    current_snapshot = {}
+    
+    # Fetch data for all cities
     for city in CITIES:
-        city_data = fetch_data_for_city(city)
-        combined.update(city_data)
+        try:
+            city_data = fetch_data_for_city(city, fetch_time)
+            current_snapshot.update(city_data)
+            print(f"✅ {city}: {len(city_data)} cars")
+        except Exception as e:
+            print(f"❌ Failed {city}: {e}")
+            send_telegram_alert(f"🚨 SPINNY SCRAPER FAILURE\n\n{city.upper()} failed: {e}")
 
+    # Load previous snapshot
+    old_snapshot = load_existing_snapshot()
+    
+    # Export current data to Excel
+    df = pd.DataFrame(list(current_snapshot.values()))
+    df.to_excel(EXPORT_FILE, index=False)
+    print(f"📊 Exported {len(df)} records to {EXPORT_FILE}")
 
-    if not os.path.exists(SNAPSHOT_FILE) or os.stat(SNAPSHOT_FILE).st_size == 0:
-        with open(SNAPSHOT_FILE, "w") as f:
-            json.dump(combined, f, indent=2)
-        df = pd.DataFrame(combined.values())
-        df.to_excel(EXPORT_FILE, index=False)  # ✅ Uses correct folder path
-        print(f"🆕 First run — exported full data to Spinny_{TODAY}.xlsx")
-        return
-
-    with open(SNAPSHOT_FILE, "r") as f:
-        previous = json.load(f)
-
-    new, changed = compare_snapshots(combined, previous)
-
-    if new or changed:
-        with pd.ExcelWriter(EXPORT_FILE) as writer:
-            df_all = pd.DataFrame(new + changed)
-            df_all.to_excel(writer, sheet_name="New & Changed Listings", index=False)
-        print(f"✅ Exported changes to {EXPORT_FILE}")
-    else:
-        print("✅ No new or changed listings.")
-        return
-
+    # Find changes
+    new_listings, price_drops = compare_snapshots(current_snapshot, old_snapshot)
+    
     # Save new snapshot
     with open(SNAPSHOT_FILE, "w") as f:
-        json.dump(combined, f, indent=2)
+        json.dump(current_snapshot, f, indent=2)
 
-    # Telegram Alerts
-    if changed:
-        msg = format_car_list(changed, "Price Drops")
-        send_telegram_alert(f"📉 Spinny Price Drop Alert\n\n{msg}")
-    if new:
-        msg = format_car_list(new, "New Listings")
-        send_telegram_alert(f"🆕 New Spinny Listings\n\n{msg}")
+    # Send alerts if changes found
+    if not new_listings and not price_drops:
+        print("✅ No changes detected")
+        return
+
+    alerts = []
+    if new_listings:
+        alerts.append(format_car_list(new_listings, "New Listings"))
+    if price_drops:
+        alerts.append(format_car_list(price_drops, "Price Drops"))
+    
+    full_message = "\n".join(alerts)
+    send_telegram_alert(f"🚗 <b>SPINNY UPDATE - {TODAY}</b>\n\n{full_message}")
 
 if __name__ == "__main__":
     main()

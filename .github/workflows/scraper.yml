@@ -1,14 +1,14 @@
-name: Daily Scraper
+name: Daily Car Scraper
 
 on:
   schedule:
-    - cron: '0 3 * * *'  # Runs at 8:30 AM IST daily
+    - cron: '30 3 * * *'  # Runs at 8:30 AM IST daily (3:30 UTC)
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 15  # ⏱ Ensure no runaway jobs
+    timeout-minutes: 30
 
     steps:
     - name: ⬇️ Checkout Repository
@@ -19,31 +19,38 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: 📦 Install Python Dependencies
+    - name: 📦 Install Cars24 Dependencies
+      working-directory: ./Cars24Scraper
       run: |
-        pip install -r Cars24Scraper/requirements.txt
-        pip install -r SpinnyScraper/requirements.txt
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: 📦 Install Spinny Dependencies
+      working-directory: ./SpinnyScraper
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
     - name: 🚗 Run Cars24 Scraper
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
         echo "Running Cars24 Scraper..."
         python Cars24Scraper/cars24_scraper.py
+
+    - name: 🚙 Run Spinny Scraper
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-    - name: 🚙 Run Spinny Scraper
       run: |
         echo "Running Spinny Scraper..."
         python SpinnyScraper/spinny_scraper.py
-      env:
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
     - name: 💾 Commit Updated Files
       run: |
         git config --global user.name "github-actions"
         git config --global user.email "github-actions@github.com"
         git add -A
-        git diff --cached --quiet || git commit -m "🤖 Daily scraper update - $(date '+%Y-%m-%d')"
+        git diff --cached --quiet || git commit -m "🤖 Daily car data update - $(date '+%Y-%m-%d')"
         git push
